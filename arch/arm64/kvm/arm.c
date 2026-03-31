@@ -2111,6 +2111,8 @@ int kvm_arch_init(void *opaque)
 		kvm_info("Hyp mode initialized successfully\n");
 	}
 
+	printk("this is my KVM B11902086\n");
+
 	return 0;
 
 out_hyp:
