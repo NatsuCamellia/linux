@@ -58,6 +58,43 @@ static void kvm_ptp_get_time(struct kvm_vcpu *vcpu, u64 *val)
 	val[3] = lower_32_bits(cycles);
 }
 
+static void kvm_pin_vcpu(struct kvm_vcpu *vcpu, u64 *val)
+{
+	unsigned long cpu_mask;
+	cpumask_var_t mask;
+	size_t cpuid;
+
+	// We pin this vCPU thread to the specified pCPUs
+	cpu_mask = smccc_get_arg1(vcpu);
+	printk("KVM_HC_VCPU_PIN, pid = %d, pcpu = %lu\n", current->pid, cpu_mask);
+
+	// Create a mask and set the CPU bits
+	if (!alloc_cpumask_var(&mask, GFP_KERNEL)) {
+		val[0] = 1;
+		return;
+	}
+
+	if (cpu_mask) {
+		cpumask_clear(mask);
+		for (cpuid = 0; cpu_mask; cpuid++, cpu_mask >>= 1) {
+			if (1 & cpu_mask)
+				cpumask_set_cpu(cpuid, mask);
+		}
+
+		// Apply the CPU mask
+		if (set_cpus_allowed_ptr(current, mask) == 0) {
+			printk("Successfully set the CPU mask\n");
+			val[0] = SMCCC_RET_SUCCESS;
+		} else {
+			val[0] = SMCCC_RET_INVALID_PARAMETER;
+		}
+	} else {
+		cpumask_setall(mask);
+	}
+
+	free_cpumask_var(mask);
+}
+
 int kvm_hvc_call_handler(struct kvm_vcpu *vcpu)
 {
 	u32 func_id = smccc_get_function(vcpu);
@@ -139,6 +176,13 @@ int kvm_hvc_call_handler(struct kvm_vcpu *vcpu)
 	case ARM_SMCCC_TRNG_RND32:
 	case ARM_SMCCC_TRNG_RND64:
 		return kvm_trng_call(vcpu);
+	case KVM_HC_VCPU_PIN:
+		kvm_pin_vcpu(vcpu, val);
+		break;
+	case KVM_HC_VCPU_AFFINITY:
+		val[0] = cpumask_bits(current->cpus_ptr)[0];
+		printk("KVM_HC_VCPU_AFFINITY, vcpu = %d, mask = %lu\n", vcpu->vcpu_id, val[0]);
+		break;
 	default:
 		return kvm_psci_call(vcpu);
 	}
