@@ -5,6 +5,7 @@
 #include <linux/kvm_host.h>
 
 #include <asm/kvm_emulate.h>
+#include <asm/mmu_context.h>
 
 #include <kvm/arm_hypercalls.h>
 #include <kvm/arm_psci.h>
@@ -68,28 +69,33 @@ static void kvm_pin_vcpu(struct kvm_vcpu *vcpu, u64 *val)
 	cpu_mask = smccc_get_arg1(vcpu);
 	printk("KVM_HC_VCPU_PIN, pid = %d, pcpu = %lu\n", current->pid, cpu_mask);
 
-	// Create a mask and set the CPU bits
-	if (!alloc_cpumask_var(&mask, GFP_KERNEL)) {
-		val[0] = 1;
-		return;
-	}
-
-	if (cpu_mask) {
-		cpumask_clear(mask);
-		for (cpuid = 0; cpu_mask; cpuid++, cpu_mask >>= 1) {
-			if (1 & cpu_mask)
-				cpumask_set_cpu(cpuid, mask);
-		}
-
-		// Apply the CPU mask
-		if (set_cpus_allowed_ptr(current, mask) == 0) {
+	// Reset
+	if (!cpu_mask) {
+		if (set_cpus_allowed_ptr(current, task_cpu_possible_mask(current)) == 0) {
 			printk("Successfully set the CPU mask\n");
 			val[0] = SMCCC_RET_SUCCESS;
 		} else {
 			val[0] = SMCCC_RET_INVALID_PARAMETER;
 		}
+		return;
+	}
+
+	// Create a mask and set the CPU bits
+	if (!alloc_cpumask_var(&mask, GFP_KERNEL)) {
+		val[0] = SMCCC_RET_INVALID_PARAMETER;
+		return;
+	}
+	cpumask_clear(mask);
+	for (cpuid = 0; cpu_mask; cpuid++, cpu_mask >>= 1) {
+		if (1 & cpu_mask)
+			cpumask_set_cpu(cpuid, mask);
+	}
+
+	if (set_cpus_allowed_ptr(current, mask) == 0) {
+		printk("Successfully set the CPU mask\n");
+		val[0] = SMCCC_RET_SUCCESS;
 	} else {
-		cpumask_setall(mask);
+		val[0] = SMCCC_RET_INVALID_PARAMETER;
 	}
 
 	free_cpumask_var(mask);
